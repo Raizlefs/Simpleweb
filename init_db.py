@@ -8,7 +8,11 @@ load_dotenv()
 def init_db():
     with app.app_context():
         print("Creating database tables...")
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception as e:
+            print(f"Failed to create tables: {e}")
+            return
         
         # Check if super admin already exists
         admin_username = os.environ.get('SUPER_ADMIN_USERNAME', 'admin')

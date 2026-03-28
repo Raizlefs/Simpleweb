@@ -33,6 +33,24 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
+# Ensure tables are created and super admin exists
+with app.app_context():
+    try:
+        db.create_all()
+        
+        # Auto-create super admin from env vars if not exists
+        admin_username = os.environ.get('SUPER_ADMIN_USERNAME', 'admin')
+        admin_password = os.environ.get('SUPER_ADMIN_PASSWORD', 'admin123')
+        
+        if not User.query.filter_by(username=admin_username).first():
+            print(f"Creating super admin: {admin_username}")
+            super_admin = User(username=admin_username, is_admin=True)
+            super_admin.set_password(admin_password)
+            db.session.add(super_admin)
+            db.session.commit()
+    except Exception as e:
+        print(f"Error during startup initialization: {e}")
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -85,20 +103,26 @@ def dashboard():
 @admin_required
 def create_user():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        is_admin = True if request.form.get('is_admin') == 'on' else False
-        
-        if User.query.filter_by(username=username).first():
-            flash('Username already exists.')
-            return redirect(url_for('create_user'))
+        try:
+            username = request.form.get('username')
+            password = request.form.get('password')
+            is_admin = True if request.form.get('is_admin') == 'on' else False
             
-        new_user = User(username=username, is_admin=is_admin)
-        new_user.set_password(password)
-        db.session.add(new_user)
-        db.session.commit()
-        flash('User created successfully.')
-        return redirect(url_for('dashboard'))
+            if User.query.filter_by(username=username).first():
+                flash('Username already exists.')
+                return redirect(url_for('create_user'))
+                
+            new_user = User(username=username, is_admin=is_admin)
+            new_user.set_password(password)
+            db.session.add(new_user)
+            db.session.commit()
+            flash('User created successfully.')
+            return redirect(url_for('dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error creating user: {e}")
+            flash(f"Error creating user: {str(e)}")
+            return redirect(url_for('create_user'))
     return render_template('create_user.html')
 
 @app.route('/edit_user/<int:user_id>', methods=['GET', 'POST'])
@@ -107,14 +131,20 @@ def create_user():
 def edit_user(user_id):
     user = User.query.get_or_404(user_id)
     if request.method == 'POST':
-        user.username = request.form.get('username')
-        password = request.form.get('password')
-        if password:
-            user.set_password(password)
-        user.is_admin = True if request.form.get('is_admin') == 'on' else False
-        db.session.commit()
-        flash('User updated successfully.')
-        return redirect(url_for('dashboard'))
+        try:
+            user.username = request.form.get('username')
+            password = request.form.get('password')
+            if password:
+                user.set_password(password)
+            user.is_admin = True if request.form.get('is_admin') == 'on' else False
+            db.session.commit()
+            flash('User updated successfully.')
+            return redirect(url_for('dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error updating user: {e}")
+            flash(f"Error updating user: {str(e)}")
+            return redirect(url_for('edit_user', user_id=user_id))
     return render_template('edit_user.html', user=user)
 
 @app.route('/delete_user/<int:user_id>')
@@ -125,9 +155,14 @@ def delete_user(user_id):
     if user.id == current_user.id:
         flash('You cannot delete yourself!')
         return redirect(url_for('dashboard'))
-    db.session.delete(user)
-    db.session.commit()
-    flash('User deleted successfully.')
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        flash('User deleted successfully.')
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting user: {e}")
+        flash(f"Error deleting user: {str(e)}")
     return redirect(url_for('dashboard'))
 
 if __name__ == '__main__':
